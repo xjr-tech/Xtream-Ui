@@ -89,14 +89,11 @@ def prepare(rType="MAIN"):
     subprocess.run("apt-get -y full-upgrade > /dev/null 2>&1", shell=True)
 
     if rType == "MAIN":
-        printc("Install MariaDB 11.5 repository")
-        subprocess.run("apt-get install -y software-properties-common > /dev/null 2>&1", shell=True)
-        subprocess.run("curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc | gpg --dearmor -o /usr/share/keyrings/mariadb-archive-keyring.gpg > /dev/null 2>&1", shell=True)
-        subprocess.run(
-            "echo y | sudo add-apt-repository -y 'deb [arch=amd64,arm64,ppc64el,s390x] [signed-by=/usr/share/keyrings/mariadb-archive-keyring.gpg] https://mirrors.xtom.com/mariadb/repo/11.5/ubuntu noble main' > /dev/null 2>&1",
-            shell=True
-        )
-        subprocess.run("apt-get update -y > /dev/null 2>&1", shell=True)
+        printc("Install MariaDB 11.4 repository")
+        subprocess.run("mkdir -p /etc/apt/keyrings > /dev/null", shell=True)
+        subprocess.run("curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc | gpg --dearmor -o /etc/apt/keyrings/mariadb.gpg > /dev/null", shell=True)
+        subprocess.run("echo \"deb [signed-by=/etc/apt/keyrings/mariadb.gpg] https://mirrors.aliyun.com/mariadb/repo/11.4/ubuntu jammy main\" | tee /etc/apt/sources.list.d/mariadb.list > /dev/null", shell=True)
+        subprocess.run("apt-get update > /dev/null", shell=True)
 
     for rPackage in rPackages:
         if not is_installed(rPackage):
