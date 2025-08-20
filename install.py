@@ -92,7 +92,7 @@ def prepare(rType="MAIN"):
         printc("Install MariaDB 11.4 repository")
         subprocess.run("mkdir -p /etc/apt/keyrings > /dev/null", shell=True)
         subprocess.run("curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc | gpg --dearmor -o /etc/apt/keyrings/mariadb.gpg > /dev/null", shell=True)
-        subprocess.run("echo \"deb [signed-by=/etc/apt/keyrings/mariadb.gpg] https://mirrors.aliyun.com/mariadb/repo/11.4/ubuntu jammy main\" | tee /etc/apt/sources.list.d/mariadb.list > /dev/null", shell=True)
+        subprocess.run("echo \"deb [signed-by=/etc/apt/keyrings/mariadb.gpg] https://mirrors.aliyun.com/mariadb/repo/11.4/ubuntu noble main\" | tee /etc/apt/sources.list.d/mariadb.list > /dev/null", shell=True)
         subprocess.run("apt-get update > /dev/null", shell=True)
 
     for rPackage in rPackages:
@@ -100,32 +100,78 @@ def prepare(rType="MAIN"):
             printc(f"Installing {rPackage}")
             subprocess.run(f"apt-get install {rPackage} -y > /dev/null 2>&1", shell=True)
 
+    # 检查libssl1.1，在Ubuntu 24.04中可能需要从旧版本仓库获取
     if not is_installed("libssl1.1"):
         printc("Installing libssl1.1")
-        subprocess.run("wget http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1 && sudo dpkg -i libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1 && rm -rf libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1", shell=True)
+        try:
+            # 尝试从Ubuntu 22.04仓库获取
+            subprocess.run("wget http://security.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb > /dev/null 2>&1 && dpkg -i libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb > /dev/null 2>&1 && rm -f libssl1.1_1.1.1f-1ubuntu2.20_amd64.deb > /dev/null 2>&1", shell=True, check=True)
+        except subprocess.CalledProcessError:
+            # 如果失败，尝试旧版本
+            printc("尝试安装备用版本的libssl1.1", col.YELLOW)
+            subprocess.run("wget http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1 && dpkg -i libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1 && rm -f libssl1.1_1.1.0g-2ubuntu4_amd64.deb > /dev/null 2>&1", shell=True)
 
-    if not is_installed("libzip5"):
-        printc("Installing libzip5")
-        subprocess.run("wget http://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1 && sudo dpkg -i libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1 && rm -rf libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1", shell=True)
+    # 检查libzip5，在Ubuntu 24.04中可能已经被更高版本替代
+    if not is_installed("libzip5") and not is_installed("libzip4"):
+        printc("Installing libzip")
+        try:
+            # 首先尝试从系统仓库安装
+            subprocess.run("apt-get install -y libzip4 > /dev/null 2>&1", shell=True, check=True)
+        except subprocess.CalledProcessError:
+            # 如果失败，尝试下载特定版本
+            printc("尝试从归档安装libzip5", col.YELLOW)
+            subprocess.run("wget http://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1 && dpkg -i libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1 && rm -f libzip5_1.5.1-0ubuntu1_amd64.deb > /dev/null 2>&1", shell=True)
 
     subprocess.run("sudo apt-get install -f -y > /dev/null 2>&1", shell=True)
 
+    # 在Ubuntu 24.04中，我们更倾向于使用Python 3，但如果脚本需要Python 2.7，我们需要手动安装
+    printc("检查Python依赖...")
+    
+    # 首先检查Python 3 paramiko是否已安装
+    py3_paramiko_installed = subprocess.run("python3 -c 'import paramiko' > /dev/null 2>&1", shell=True).returncode == 0
+    
+    if not py3_paramiko_installed:
+        printc("Installing Python 3 paramiko...")
+        subprocess.run("apt-get install -y python3-paramiko > /dev/null 2>&1", shell=True)
+    
+    # 如果仍然需要Python 2.7（某些旧脚本可能需要）
     python_installed = is_installed("python2.7")
     pip_installed = subprocess.run("pip2.7 --version > /dev/null 2>&1", shell=True).returncode == 0
     paramiko_installed = subprocess.run("pip2.7 show paramiko > /dev/null 2>&1", shell=True).returncode == 0
-
+    
     if not python_installed or not pip_installed or not paramiko_installed:
-        printc("Installing python2 & pip2 & paramiko...")
-        subprocess.run("sudo apt install -y build-essential checkinstall libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev wget tar > /dev/null 2>&1", shell=True)
-
+        printc("Installing Python 2.7 dependencies (可能在Ubuntu 24.04上需要手动编译)...")
+        subprocess.run("apt-get install -y build-essential checkinstall libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev wget tar > /dev/null 2>&1", shell=True)
+        
+        # 创建临时目录进行编译
+        temp_dir = "/tmp/python2_install"
+        subprocess.run(f"mkdir -p {temp_dir}", shell=True)
+        
         if not python_installed:
-            subprocess.run("cd /usr/src && sudo wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz > /dev/null 2>&1 && sudo tar xzf Python-2.7.18.tgz > /dev/null 2>&1 && cd Python-2.7.18 && sudo ./configure --enable-optimizations > /dev/null 2>&1 && sudo make altinstall > /dev/null 2>&1", shell=True)
-
-        if not pip_installed:
-            subprocess.run("curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py > /dev/null 2>&1 && sudo python2.7 get-pip.py > /dev/null 2>&1", shell=True)
-
-        if not paramiko_installed:
+            printc("编译安装Python 2.7...")
+            py27_cmd = f"""
+cd {temp_dir} && \
+wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz > /dev/null 2>&1 && \
+tar xzf Python-2.7.18.tgz > /dev/null 2>&1 && \
+cd Python-2.7.18 && \
+./configure --enable-optimizations > /dev/null 2>&1 && \
+make > /dev/null 2>&1 && \
+make altinstall > /dev/null 2>&1
+"""
+            subprocess.run(py27_cmd, shell=True)
+            
+        if not pip_installed and os.path.exists("/usr/local/bin/python2.7"):
+            printc("安装pip2...")
+            subprocess.run("curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output /tmp/get-pip.py > /dev/null 2>&1", shell=True)
+            subprocess.run("python2.7 /tmp/get-pip.py > /dev/null 2>&1", shell=True)
+            subprocess.run("rm -f /tmp/get-pip.py", shell=True)
+            
+        if not paramiko_installed and subprocess.run("pip2.7 --version > /dev/null 2>&1", shell=True).returncode == 0:
+            printc("安装paramiko for Python 2.7...")
             subprocess.run("pip2.7 install paramiko > /dev/null 2>&1", shell=True)
+            
+        # 清理临时目录
+        subprocess.run(f"rm -rf {temp_dir}", shell=True)
 
     subprocess.run("apt-get install -f -y > /dev/null 2>&1", shell=True)
 
@@ -210,14 +256,56 @@ def mysql(rUsername, rPassword):
     global rMySQLCnf
     printc("Configuring MySQL")
     rCreate = True
-    if os.path.exists("/etc/mysql/my.cnf"):
-        if open("/etc/mysql/my.cnf", "r").read(14) == "# Xtream Codes": rCreate = False
+    
+    # 检查多个可能的MySQL配置文件位置
+    mysql_config_paths = [
+        "/etc/mysql/my.cnf",
+        "/etc/mysql/mariadb.cnf",
+        "/etc/my.cnf",
+        "/etc/mariadb/my.cnf"
+    ]
+    
+    mysql_config_path = None
+    for path in mysql_config_paths:
+        if os.path.exists(path):
+            mysql_config_path = path
+            printc(f"找到MySQL配置文件: {path}")
+            if open(path, "r").read(14) == "# Xtream Codes":
+                rCreate = False
+            break
+    
+    if mysql_config_path is None:
+        printc("MySQL配置文件未找到，尝试创建新配置", col.YELLOW)
+        mysql_config_path = "/etc/mysql/my.cnf"
+        # 确保目录存在
+        os.makedirs(os.path.dirname(mysql_config_path), exist_ok=True)
+    
     if rCreate:
-        shutil.copy("/etc/mysql/my.cnf", "/etc/mysql/my.cnf.xc")
-        rFile = open("/etc/mysql/my.cnf", "wb")
-        rFile.write(rMySQLCnf)
-        rFile.close()
-        os.system("systemctl restart mariadb > /dev/null")
+        # 备份原始配置文件（如果存在）
+        if os.path.exists(mysql_config_path):
+            backup_path = f"{mysql_config_path}.xc"
+            try:
+                shutil.copy(mysql_config_path, backup_path)
+                printc(f"已备份原始MySQL配置到 {backup_path}")
+            except Exception as e:
+                printc(f"无法备份MySQL配置: {str(e)}", col.YELLOW)
+        
+        # 写入新配置
+        try:
+            rFile = open(mysql_config_path, "wb")
+            rFile.write(rMySQLCnf)
+            rFile.close()
+        except Exception as e:
+            printc(f"无法写入MySQL配置: {str(e)}", col.YELLOW)
+            return False
+        
+        # 重启MySQL/MariaDB服务
+        restart_result = os.system("systemctl restart mariadb > /dev/null")
+        if restart_result != 0:
+            # 如果mariadb服务重启失败，尝试mysql服务
+            restart_result = os.system("systemctl restart mysql > /dev/null")
+            if restart_result != 0:
+                printc("无法重启MySQL/MariaDB服务", col.YELLOW)
     #printc("Enter MySQL Root Password:", col.BRIGHT_RED)
     for i in range(5):
         rMySQLRoot = "" #raw_input("  ")
